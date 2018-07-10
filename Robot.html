@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Projekt robota</title>
+	<script type="text/javascript" src ="libs/three.js"></script>
+	<script type="text/javascript" src="libs/OrbitControls.js"></script>
+	<script type="text/javascript" src="libs/Stats.js"></script>
+	<script type="text/javascript" src="libs/THREEx.KeyboardState.js"></script>
+	<script type="text/javascript" src="libs/THREEx.FullScreen.js"></script>
+	<script type="text/javascript" src="libs/THREEx.WindowResize.js"></script>
+	<script type="text/javascript" src="libs/dat.gui.js"></script>
+	
+    <style>
+        body {
+            /* set margin to 0 and overflow to hidden, to go fullscreen */
+            margin: 0;
+            overflow: hidden;
+        }
+		#Info {
+			position: absolute;
+			width: 100%;
+			padding: 5px;
+			color: red;
+			text-align: center;
+		}
+    </style>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+<body>
+<div id="Info">W:forward, S:backward, A:turn left, D:turn right, R: start position, F: fullscreen, SPACE - Jump</div>
+<div id="Stats-output"></div>
+<div id="WebGL-output"></div>
+<script>
+
+var camera, controls, renderer, robot, scene, stats, sun, parent, parent2;
+var moonSpeed = 0.01;
+var sunSpeed = 0.01;
+var step =0;
+var clock = new THREE.Clock();
+var keyboard = new THREEx.KeyboardState();
+
+var animOffset       = 0,   // starting frame of animation
+	walking         = false,
+	duration        = 1000, // milliseconds to complete animation
+	keyframes       = 20,   // total number of animation frames
+	interpolation   = duration / keyframes, // milliseconds per frame
+	lastKeyframe    = 0,    // previous keyframe
+	currentKeyframe = 0;
+	
+init();
+animate();
+		
+function init() 
+{
+	 // Setup a new scene
+	scene = new THREE.Scene();
+	
+	// Setup the camera
+	camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.1, 10000);
+	scene.add(camera);
+	camera.position.set(0,200,500);
+
+	// Add ground
+	var ground = createMesh(new THREE.PlaneGeometry(2500,2500),"grass.jpg");
+	ground.rotation.x = -0.5 * Math.PI;
+	ground.receiveShadow = true;
+	scene.add(ground);
+	
+	// Create renderer
+	renderer = new THREE.WebGLRenderer();
+	renderer.setClearColor(new THREE.Color(0xEEEEEE,1.0));
+	renderer.setSize(window.innerWidth, window.innerHeight);
+	renderer.shadowMapEnabled = true;
+	document.getElementById( 'WebGL-output' ).appendChild( renderer.domElement );
+
+	// Add the lights and sun with orbit
+	var light = new THREE.PointLight(0xffffff);
+	light.position.set(400,400,400);
+	scene.add(light);
+	
+	var spotLight = new THREE.SpotLight(0xffffff);
+    spotLight.position.set(-2500, 1000, 400);
+    spotLight.castShadow = true;
+    scene.add(spotLight);
+
+    sun = createMesh(new THREE.SphereGeometry(350), "sun.jpg")
+    sun.position = spotLight.position;
+    sun.add(spotLight);
+	scene.add(sun);
+	
+	parent2 = new THREE.Object3D();
+	scene.add( parent2 );
+	var pivot2 = new THREE.Object3D();
+	pivot2.rotation.z = 0;
+	parent2.add(pivot2);
+	pivot2.add(sun);
+	
+	// Create Skybox
+	var images =["images/dark-s_xpos.jpg","images/dark-s_xneg.jpg","images/dark-s_ypos.jpg","images/dark-s_yneg.jpg","images/dark-s_zpos.jpg","images/dark-s_zneg.jpg"];	
+	var materialArray = [];
+	for (var i = 0; i < 6; i++)
+		materialArray.push( new THREE.MeshBasicMaterial({
+			map: THREE.ImageUtils.loadTexture(images[i]),
+			side: THREE.BackSide
+		}));
+	var skyBoxMaterial = new THREE.MeshFaceMaterial( materialArray );
+	var skyBox = new THREE.Mesh( new THREE.CubeGeometry( 9000, 9000, 9000 ), skyBoxMaterial );
+	scene.add( skyBox );
+	
+	// Add moon with orbit
+	var moon = createMesh(new THREE.SphereGeometry(175), "moon.jpg")
+	moon.position.set(0,1500,0);
+	moon.castShadow = true;
+	scene.add(moon);
+	
+	parent = new THREE.Object3D();
+	scene.add( parent );
+	var pivot = new THREE.Object3D();
+	pivot.rotation.z = 0;
+	parent.add(pivot);
+	pivot.add(moon);
+	
+	//Add fence
+	var fenceRight = createMesh(new THREE.CubeGeometry(100,100,2500), "brick-wallt.jpg")
+	fenceRight.position.set(-1200,50,0);
+	fenceRight.castShadow = true;
+	fenceRight.receiveShadow = true;
+	scene.add(fenceRight);
+	
+	var fenceLeft = createMesh(new THREE.CubeGeometry(100,100,2500), "brick-wallt.jpg")
+	fenceLeft.position.set(1200,50,0);
+	fenceLeft.castShadow = true;
+	fenceLeft.receiveShadow = true;
+	scene.add(fenceLeft);
+	
+	var fenceFront = createMesh(new THREE.CubeGeometry(2300,100,100), "brick-wallt.jpg")
+	fenceFront.position.set(0,50,1200);
+	fenceFront.castShadow = true;
+	fenceFront.receiveShadow = true;
+	scene.add(fenceFront);
+	
+	var fenceBack = createMesh(new THREE.CubeGeometry(2300,100,100), "brick-wallt.jpg")
+	fenceBack.position.set(0,50,-1200);
+	fenceBack.castShadow = true;
+	fenceBack.receiveShadow = true;
+	scene.add(fenceBack);
+
+	 // Load the JSON files and provide callback functions (addmodelToScene)
+	var loader = new THREE.JSONLoader();
+	loader.load( "model/robot-animation.js", addModelToScene );
+	
+	// Add fullscreen option
+	THREEx.WindowResize(renderer, camera);
+	THREEx.FullScreen.bindKey({ charCode : 'f'.charCodeAt(0) });
+	
+	// Add camera controls
+	controls = new THREE.OrbitControls( camera );
+	controls.addEventListener( 'change', render );
+	
+	// Create Stats Mode
+	stats = new Stats();
+    stats.domElement.style.position = 'absolute';
+    stats.domElement.style.left = '0px';
+    stats.domElement.style.top = '0px';
+    document.getElementById("Stats-output").appendChild(stats.domElement);
+	
+	//Add simple GUI
+	var fenceTextureChange = new function () {
+        this.changeTexture = function (e) {
+            var texture = THREE.ImageUtils.loadTexture("images/" + e+ ".jpg");
+			fenceRight.material.map = texture;
+			fenceLeft.material.map = texture;
+			fenceFront.material.map = texture;
+			fenceBack.material.map = texture;
+			
+        }
+     };
+	 
+	 var groundTextureChange = new function () {
+        this.changeTexture = function (e) {
+            var texture = THREE.ImageUtils.loadTexture("images/" + e+ ".jpg");
+            ground.material.map = texture;
+        }
+     };
+	
+	gui = new dat.GUI();
+	
+	parameters = 
+	{
+		x: 0, z: 0,
+		moonRotationSpeed: 0.01, 
+		sunRotationSpeed: 0.01,
+		visible: true,
+		fenceTexture: "",
+		groundTexture: "",
+	};
+
+	var folder1 = gui.addFolder('Robot Position');
+	var robotX = folder1.add( parameters, 'x' ).min(-1100).max(1100).step(20).listen();
+	var robotZ = folder1.add( parameters, 'z' ).min(-1100).max(1100).step(20).listen();
+	folder1.open();
+	
+	robotX.onChange(function(value) {
+		robot.position.x = value;
+	});
+	robotZ.onChange(function(value) {
+		robot.position.z = value;
+	});
+	
+	var moonRotationSpeed = gui.add( parameters, 'moonRotationSpeed' ).min(-0.2).max(0.2).step(0.01).name('Moon Rotation Speed').listen();
+	moonRotationSpeed.onChange(function(value) {
+		moonSpeed = value;  
+	});
+	
+	var sunRotationSpeed = gui.add( parameters, 'sunRotationSpeed' ).min(-0.2).max(0.2).step(0.01).name('Sun Rotation Speed').listen();
+	sunRotationSpeed.onChange(function(value) {
+		sunSpeed = value;  
+	});
+	
+	var fenceVisible = gui.add( parameters, 'visible' ).name('Fence Visible').listen();
+	fenceVisible.onChange(function(value){
+		fenceRight.visible = value;
+		fenceLeft.visible = value;
+		fenceFront.visible = value;
+		fenceBack.visible = value;
+	});
+	
+	var fenceImage = gui.add( parameters, 'fenceTexture',["grasst","floor-woodt","brick-wallt","stonet","moon"] ).name('Fence Texture').listen();
+	fenceImage.onChange(fenceTextureChange.changeTexture); 
+	
+	var groundImage = gui.add( parameters, 'groundTexture',["grass","floor-wood","lava","crate","stone","brick-wall","moon"] ).name('Ground Texture').listen();
+	groundImage.onChange(groundTextureChange.changeTexture); 
+
+	gui.open();
+}
+
+ // After loading JSON from our file, we add it to the scene
+function addModelToScene( geometry, materials ) 
+{
+	for (var i = 0; i < materials.length; i++)
+		materials[i].morphTargets = true;
+		
+	var material = new THREE.MeshFaceMaterial( materials );
+	robot = new THREE.Mesh( geometry, material );
+	robot.scale.set(20,20,20);
+	robot.castShadow = true;
+	robot.receiveShadow = true;
+	scene.add( robot );
+}
+
+function createMesh(geom, imageFile) 
+{
+    var texture = THREE.ImageUtils.loadTexture("images/" + imageFile)
+    var material = new THREE.MeshLambertMaterial();
+    material.map = texture;
+	material.side = THREE.DoubleSide;
+
+    var mesh = new THREE.Mesh(geom, material);
+    return mesh;
+}
+
+function animate() 
+{
+    requestAnimationFrame(animate);
+	render();		
+	update();
+}
+
+function update()
+{
+	// Add controls to model
+	delta = clock.getDelta(); 
+	var moveDistance = 100 * delta;
+	walking = false;
+
+	if (keyboard.pressed("w")){ 
+		robot.translateZ(moveDistance);
+		if(robot.position.x>1100)robot.position.x = 1100;
+		if(robot.position.x<-1100)robot.position.x = -1100;
+		if(robot.position.z>1100)robot.position.z = 1100;
+		if(robot.position.z<-1100)robot.position.z = -1100;
+	}
+	if (keyboard.pressed("s")){
+		robot.translateZ(-moveDistance);
+		if(robot.position.x>1100)robot.position.x = 1100;
+		if(robot.position.x<-1100)robot.position.x = -1100;
+		if(robot.position.z>1100)robot.position.z = 1100;
+		if(robot.position.z<-1100)robot.position.z = -1100;
+	}
+	if (keyboard.pressed("d"))
+		robot.rotation.y -= delta;
+	if (keyboard.pressed("a"))
+		robot.rotation.y += delta;
+	if (keyboard.pressed("r"))
+	{
+		robot.position.set(0,0,0);
+		robot.rotation.set(0,0,0);
+		camera.position.set(0,200,500);
+	}	
+	if (keyboard.pressed("space"))
+	{
+            step += 0.1;
+            robot.position.y = 2 + ( 10 * Math.abs(Math.sin(step)));
+	}
+	
+	var walkingKeys = ["w", "s", "a", "d","space","r"];
+	for (var i = 0; i < walkingKeys.length - 1; i++)
+	{
+		if (keyboard.pressed(walkingKeys[i]))
+			walking = true;
+	}
+	
+	controls.update();
+	stats.update();
+}
+
+function render() 
+{
+	if (robot && walking)
+	{
+		time = new Date().getTime() % duration;
+		keyframe = Math.floor(time / interpolation) + animOffset;
+		if (keyframe != currentKeyframe) 
+		{
+			robot.morphTargetInfluences[lastKeyframe] = 0;
+			robot.morphTargetInfluences[currentKeyframe] = 1;
+			robot.morphTargetInfluences[keyframe] = 0;
+			lastKeyframe = currentKeyframe;
+			currentKeyframe = keyframe;
+		}
+		robot.morphTargetInfluences[keyframe] = (time % interpolation) / interpolation;
+		robot.morphTargetInfluences[lastKeyframe] = 1 - robot.morphTargetInfluences[keyframe];
+	}
+	
+	// Camera observe robot
+	camera.lookAt(robot.position);
+	
+	//Add jump function to robot
+	if (keyboard.pressed("space"))
+	{
+            step += 0.1;
+            robot.position.y = 50 + ( 10 * Math.abs(Math.sin(step)));
+	}
+
+	// Rotate sun object	
+    sun.rotation.y += 0.03;
+	
+	// Add moon move on orbit
+	parent.rotation.z += moonSpeed;
+	parent2.rotation.y += sunSpeed;
+	
+	renderer.render( scene, camera );
+}
+</script>
+</body>
+</html>
